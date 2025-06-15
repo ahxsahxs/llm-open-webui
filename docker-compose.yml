@@ -13,14 +13,13 @@ services:
       - open-webui:/app/backend/data
 
     environment:
-      - USE_CUDA_DOCKER=true
       - WEBUI_NAME=Knowledge Bases and Tools
       - ENABLE_CODE_EXECUTION=false
       - ENABLE_CODE_INTERPRETER=false
       - DEFAULT_MODELS=gemma3
       # https://docs.openwebui.com/getting-started/env-configuration#ollama
       - ENABLE_OLLAMA_API=true
-      - OLLAMA_BASE_URLS=http://host.docker.internal:7869 
+      - OLLAMA_BASE_URLS=http://host.docker.internal:7869
       # https://docs.openwebui.com/getting-started/env-configuration#rag-content-extraction-engine
       - CONTENT_EXTRACTION_ENGINE=docling
       - DOCLING_SERVER_URL=http://host.docker.internal:5001
@@ -44,7 +43,7 @@ services:
       - USER_PERMISSIONS_CHAT_TTS=false
       - USER_PERMISSIONS_CHAT_MULTIPLE_MODELS=false
       # https://docs.openwebui.com/getting-started/env-configuration#database-pool
-      - DATABASE_URL=postgresql://__PG_USER__:__PG_PASS__@host.docker.internal:5432/main_db
+      - DATABASE_URL=postgresql://__PG_USER__:__PG_PASS__@host.docker.internal:5432/postgres
     deploy:
       resources:
         reservations:
@@ -61,6 +60,7 @@ services:
       - ollama
       - docling
       - qdrant
+      - hayhooks
 
   # OLLAMA
   ollama:
@@ -140,18 +140,60 @@ services:
     environment:
       POSTGRES_USER: __PG_USER__
       POSTGRES_PASSWORD: __PG_PASS__
-      POSTGRES_DB: main_db
+      POSTGRES_DB: postgres
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./pg_init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - open-webui-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready"]
+      test: ["CMD-SHELL", "pg_isready -U __PG_USER__ -d postgres"]
       interval: 1s
       timeout: 5s
       retries: 10
+
+  # Hayhooks OpenAPI Tools 
+  hayhooks:
+    build:
+      context: ./hayhooks           # Build context 
+      dockerfile: Dockerfile        # Dockerfile name (default)
+    image: hayhooks-pipelines       # Tag the built image
+    container_name: hayhooks        # Container name
+    ports:
+      - "1416:1416"                 # Host:Container port mapping
+    environment:                    # Environment variables
+      - DEBUG=true
+      - HAYHOOKS_ADDITIONAL_PYTHON_PATH=./common
+      - HAYHOOKS_PIPELINES_DIR=./pipelines
+      # Postgres
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_NAME=postgres
+      - DB_USER=__PG_USER__
+      - DB_PASSWORD=__PG_PASS__
+      # Qdrant
+      - QDRANT_API_KEY=__QDRANT_KEY__
+      - QDRANT_URI=http://host.docker.internal:6333
+      # Ollama
+      - OLLAMA_URI=http://host.docker.internal:7869
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:                    # Service dependencies
+      - postgres
+      - qdrant
+      - ollama
+    networks:
+      - open-webui-network
+    volumes:
+      - ./logs/hayhooks:/tmp/deploy_logs/
+    healthcheck:                    # Health check configuration
+      test: ["CMD", "curl", "-f", "http://localhost:1416/docs"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 # VOLUMES
 volumes:

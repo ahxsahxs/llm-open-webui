@@ -1,0 +1,5 @@
+pydantic
+hayhooks
+qdrant_client
+ollama-haystack
+psycopg[binary]
