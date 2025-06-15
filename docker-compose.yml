@@ -1,0 +1,119 @@
+version: '3.8'
+
+# SERVICES
+services: 
+  
+  # OPEN WEBUI
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:cuda
+    container_name: openwebui
+    ports:
+      - "3000:8080"
+    volumes:
+      - open-webui:/app/backend/data
+
+    # https://docs.openwebui.com/getting-started/env-configuration#default_models
+    # https://docs.openwebui.com/getting-started/env-configuration#ollama
+    environment: 
+      - USE_OLLAMA_DOCKER=true
+      - OLLAMA_BASE_URLS=http://host.docker.internal:7869 
+      - WEBUI_NAME=Knowledge Bases and Tools
+      - USE_CUDA_DOCKER=true
+      - ENABLE_CODE_EXECUTION=false
+      - ENABLE_CODE_INTERPRETER=false
+      - CONTENT_EXTRACTION_ENGINE=docling
+      - DOCLING_SERVER_URL=http://host.docker.internal:5001
+      - DOCLING_OCR_ENGINE=easyocr
+      - DOCLING_OCR_LANG=en,fr,de,es
+      - PGVECTOR_DB_URL=postgresql://postgres:postgres@host.docker.internal:5432/main_db
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+    networks:
+      - open-webui-network
+    depends_on:
+      - ollama
+      - docling
+      - pgvector
+
+  # OLLAMA
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: ollama
+    pull_policy: always
+    tty: true
+    restart: unless-stopped
+    ports:
+      - 7869:11434
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    volumes:
+      - ollama:/root/.ollama
+    networks:
+      - open-webui-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all 
+              capabilities: [gpu]
+
+  # DOCLING
+  docling:
+    image: quay.io/docling-project/docling-serve-cu124
+    container_name: docling
+    ports:
+      - 5001:5001
+    environment:
+      - DOCLING_SERVE_ENABLE_UI=true
+    networks:
+      - open-webui-network
+    # volumes:
+    #   - ./docling_cache:/opt/app-root/src/.cache
+    post_start:
+      - command: |
+          docling-tools models download
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all 
+              capabilities: [gpu]
+    
+  
+    # PGVECTOR DATABASE
+  pgvector:
+    image: pgvector/pgvector:pg17 # PostgreSQL with pgvector support
+    container_name: pgvector-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: main_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - open-webui-network
+
+# VOLUMES
+volumes:
+  open-webui:
+  ollama:
+  pgdata:
+  # docling_cache:
+
+# NETWORKS
+networks:
+  open-webui-network:
+    name: "open-webui-network"
+    external: false
